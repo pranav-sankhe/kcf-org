@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { initializeApp, getApps } from "firebase/app";
 import {
-  getFirestore,
   collection,
   onSnapshot,
   addDoc,
@@ -11,19 +9,8 @@ import {
   doc,
   serverTimestamp,
 } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyCWdcPq5XG4f9HxDhu9yg0T0uY62YG5CEw",
-  authDomain: "kcf-org.firebaseapp.com",
-  projectId: "kcf-org",
-};
-
-const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-const ACCESS_CODE = "kcf-fund-8842";
-const SUBSCRIPTION = 5000;
 
 interface Member {
   id: string;
@@ -37,49 +24,105 @@ interface Expense {
   description: string;
 }
 
-export default function Home() {
-  const [access, setAccess] = useState(false);
-  const [code, setCode] = useState("");
-  const [codeError, setCodeError] = useState(false);
+const SUBSCRIPTION = 5000;
 
+/* ── SVG Donut Chart ─────────────────────────────────────── */
+function DonutChart({ value, total, label }: { value: number; total: number; label: string }) {
+  const R = 36;
+  const C = 2 * Math.PI * R;
+  const arc = total > 0 ? (value / total) * C : 0;
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="relative">
+        <svg viewBox="0 0 100 100" className="w-32 h-32 -rotate-90">
+          <circle cx="50" cy="50" r={R} fill="none" stroke="#e5e7eb" strokeWidth="12" />
+          <circle
+            cx="50" cy="50" r={R}
+            fill="none"
+            stroke="#c8a84b"
+            strokeWidth="12"
+            strokeLinecap="round"
+            strokeDasharray={`${arc} ${C - arc}`}
+            style={{ transition: "stroke-dasharray 1.2s ease" }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center rotate-90">
+          <span className="text-2xl font-bold text-navy leading-none">{value}</span>
+          <span className="text-xs text-gray-400">of {total}</span>
+        </div>
+      </div>
+      <div className="text-center">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</p>
+        <p className="text-lg font-bold text-gold">{pct}%</p>
+      </div>
+    </div>
+  );
+}
+
+/* ── Animated Bar ────────────────────────────────────────── */
+function Bar({
+  label,
+  value,
+  max,
+  colorClass,
+  textClass,
+  delay = 0,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  colorClass: string;
+  textClass: string;
+  delay?: number;
+}) {
+  const pct = max > 0 ? Math.min((Math.abs(value) / max) * 100, 100) : 0;
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1.5">
+        <span className="text-xs font-medium text-gray-500">{label}</span>
+        <span className={`text-xs font-bold ${textClass}`}>
+          ₹{Math.abs(value).toLocaleString("en-IN")}
+        </span>
+      </div>
+      <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+        <motion.div
+          className={`h-full rounded-full ${colorClass}`}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 1, ease: "easeOut", delay }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ── Dashboard ───────────────────────────────────────────── */
+export default function Dashboard() {
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [amount, setAmount] = useState("");
   const [desc, setDesc] = useState("");
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    if (!access) return;
-
-    const unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
+    const unsubM = onSnapshot(collection(db, "members"), (snap) => {
       setMembers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Member)));
       setLoading(false);
     });
-
-    const unsubExpenses = onSnapshot(collection(db, "expenses"), (snap) => {
+    const unsubE = onSnapshot(collection(db, "expenses"), (snap) => {
       setExpenses(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Expense)));
     });
+    return () => { unsubM(); unsubE(); };
+  }, []);
 
-    return () => {
-      unsubMembers();
-      unsubExpenses();
-    };
-  }, [access]);
-
-  const collected = members.filter((m) => m.paid).length * SUBSCRIPTION;
+  const paidCount = members.filter((m) => m.paid).length;
+  const collected = paidCount * SUBSCRIPTION;
   const spent = expenses.reduce((a, b) => a + (b.amount ?? 0), 0);
   const balance = collected - spent;
-
-  const enter = () => {
-    if (code === ACCESS_CODE) {
-      setAccess(true);
-      setCodeError(false);
-    } else {
-      setCodeError(true);
-    }
-  };
+  const totalPossible = members.length * SUBSCRIPTION;
 
   const togglePayment = async (m: Member) => {
     await updateDoc(doc(db, "members", m.id), { paid: !m.paid });
@@ -99,133 +142,159 @@ export default function Home() {
     setAdding(false);
   };
 
-  if (!access) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-white flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm"
-        >
-          <div className="text-center mb-8">
-            <div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-7 h-7 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">KCF Fund</h1>
-            <p className="text-sm text-gray-400 mt-1">Enter access code to continue</p>
-          </div>
-
-          <div className="space-y-3">
-            <input
-              type="password"
-              value={code}
-              onChange={(e) => { setCode(e.target.value); setCodeError(false); }}
-              onKeyDown={(e) => e.key === "Enter" && enter()}
-              placeholder="Access code"
-              autoFocus
-              className={`w-full border rounded-xl px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-indigo-400 focus:border-transparent ${
-                codeError ? "border-red-400 bg-red-50 text-red-800" : "border-gray-200 bg-gray-50"
-              }`}
-            />
-            <AnimatePresence>
-              {codeError && (
-                <motion.p
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="text-xs text-red-500 pl-1"
-                >
-                  Incorrect code. Try again.
-                </motion.p>
-              )}
-            </AnimatePresence>
-            <button
-              onClick={enter}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
-            >
-              Enter
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  const paidCount = members.filter((m) => m.paid).length;
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-            </div>
-            <span className="font-bold text-gray-900 text-base">KCF Fund</span>
+    <div className="bg-cream min-h-full">
+
+      {/* ── Hero stats ───────────────────────────────────── */}
+      <div className="bg-navy px-4 pt-8 pb-10">
+        <div className="max-w-5xl mx-auto">
+          <p className="text-gold/50 text-xs font-semibold tracking-[0.3em] uppercase mb-5">
+            Fund Overview · 2024–25
+          </p>
+          <div className="grid grid-cols-3 gap-3 sm:gap-6">
+            {[
+              { label: "Collected", value: collected, sub: `${paidCount} members`, color: "text-gold" },
+              { label: "Spent", value: spent, sub: `${expenses.length} expenses`, color: "text-red-300" },
+              {
+                label: "Balance",
+                value: balance,
+                sub: balance >= 0 ? "Healthy" : "Overspent",
+                color: balance >= 0 ? "text-emerald-300" : "text-red-400",
+              },
+            ].map((s, i) => (
+              <motion.div
+                key={s.label}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
+                className="text-center"
+              >
+                <p className="text-gold/40 text-xs tracking-widest uppercase mb-1">{s.label}</p>
+                <p className={`text-2xl sm:text-3xl font-bold ${s.color}`}>
+                  ₹{s.value.toLocaleString("en-IN")}
+                </p>
+                <p className="text-white/30 text-xs mt-1 hidden sm:block">{s.sub}</p>
+              </motion.div>
+            ))}
           </div>
-          <span className="text-xs text-gray-400 font-medium">2024–25</span>
         </div>
-      </header>
+      </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+      <div className="max-w-5xl mx-auto px-4 -mt-4 pb-8 space-y-5">
 
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { label: "Collected", value: collected, colorClass: "text-emerald-600", bgClass: "bg-emerald-50" },
-            { label: "Spent", value: spent, colorClass: "text-rose-500", bgClass: "bg-rose-50" },
-            { label: "Balance", value: balance, colorClass: balance >= 0 ? "text-indigo-600" : "text-red-600", bgClass: balance >= 0 ? "bg-indigo-50" : "bg-red-50" },
-          ].map((stat, i) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.07 }}
-              className="bg-white rounded-xl p-3.5 text-center shadow-sm border border-gray-100"
-            >
-              <p className="text-xs text-gray-400 font-medium mb-1.5">{stat.label}</p>
-              <p className={`text-base font-bold leading-tight ${stat.colorClass}`}>
-                ₹{stat.value.toLocaleString("en-IN")}
-              </p>
-            </motion.div>
-          ))}
+        {/* ── Analytics row ────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* Members donut */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"
+          >
+            <h3 className="text-sm font-semibold text-navy mb-5">Member Payments</h3>
+            <div className="flex items-center gap-6 justify-center">
+              <DonutChart value={paidCount} total={members.length} label="Paid" />
+              <div className="flex-1 space-y-4 max-w-[140px]">
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="text-gray-400">Paid</span>
+                    <span className="text-gold font-semibold">{paidCount}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-gold rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: members.length > 0 ? `${(paidCount / members.length) * 100}%` : "0%" }}
+                      transition={{ duration: 1, ease: "easeOut", delay: 0.4 }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="text-gray-400">Pending</span>
+                    <span className="text-amber-500 font-semibold">{members.length - paidCount}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-amber-400 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: members.length > 0 ? `${((members.length - paidCount) / members.length) * 100}%` : "0%" }}
+                      transition={{ duration: 1, ease: "easeOut", delay: 0.55 }}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-300 pt-1">
+                  ₹{(paidCount * SUBSCRIPTION).toLocaleString("en-IN")} collected
+                </p>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Fund allocation bars */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"
+          >
+            <h3 className="text-sm font-semibold text-navy mb-5">Fund Allocation</h3>
+            <div className="space-y-4">
+              <Bar label="Target" value={totalPossible} max={totalPossible} colorClass="bg-gray-300" textClass="text-gray-400" delay={0.3} />
+              <Bar label="Collected" value={collected} max={totalPossible} colorClass="bg-gold" textClass="text-gold" delay={0.45} />
+              <Bar label="Spent" value={spent} max={totalPossible} colorClass="bg-red-400" textClass="text-red-500" delay={0.55} />
+              <Bar
+                label="Balance"
+                value={balance}
+                max={totalPossible}
+                colorClass={balance >= 0 ? "bg-emerald-400" : "bg-red-500"}
+                textClass={balance >= 0 ? "text-emerald-600" : "text-red-600"}
+                delay={0.65}
+              />
+            </div>
+          </motion.div>
         </div>
 
-        {/* Members */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
+        {/* ── Members list ──────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
+          transition={{ delay: 0.35 }}
+          className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
         >
-          <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800 text-sm">Members</h2>
+          <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+            <h3 className="font-semibold text-navy text-sm">Members</h3>
             {!loading && (
-              <span className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
+              <span className="text-xs text-gray-400 bg-gray-50 px-2.5 py-1 rounded-full">
                 {paidCount}/{members.length} paid
               </span>
             )}
           </div>
 
           {loading ? (
-            <div className="px-4 py-10 text-center">
-              <div className="inline-block w-5 h-5 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" />
+            <div className="py-10 flex justify-center">
+              <div className="w-5 h-5 border-2 border-gold/20 border-t-gold rounded-full animate-spin" />
             </div>
           ) : members.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-400">
-              No members yet. Add them to your Firestore <code className="bg-gray-100 px-1 rounded text-xs">members</code> collection.
-            </div>
+            <p className="text-center text-sm text-gray-400 py-8">
+              No members in Firestore yet.
+            </p>
           ) : (
             <div className="divide-y divide-gray-50">
               {members.map((m) => (
-                <div key={m.id} className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-gray-800 font-medium">{m.name}</span>
+                <div key={m.id} className="flex items-center justify-between px-5 py-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                        m.paid
+                          ? "bg-gold/20 text-navy"
+                          : "bg-gray-100 text-gray-400"
+                      }`}
+                    >
+                      {m.name.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-sm font-medium text-gray-800">{m.name}</span>
+                  </div>
                   <button
                     onClick={() => togglePayment(m)}
                     className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-all active:scale-95 ${
@@ -240,27 +309,29 @@ export default function Home() {
               ))}
             </div>
           )}
-        </motion.section>
+        </motion.div>
 
-        {/* Add Expense */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
-        >
-          <div className="px-4 py-3 border-b border-gray-50">
-            <h2 className="font-semibold text-gray-800 text-sm">Add Expense</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            <div className="flex gap-2">
+        {/* ── Expense form + list ───────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* Add expense */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-gray-50">
+              <h3 className="font-semibold text-navy text-sm">Add Expense</h3>
+            </div>
+            <div className="p-5 space-y-3">
               <input
                 type="number"
                 placeholder="₹ Amount"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="w-28 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent bg-gray-50"
                 min="1"
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gold/30 focus:border-gold/40 bg-gray-50"
               />
               <input
                 type="text"
@@ -268,56 +339,60 @@ export default function Home() {
                 value={desc}
                 onChange={(e) => setDesc(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addExpense()}
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent bg-gray-50"
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gold/30 focus:border-gold/40 bg-gray-50"
               />
+              <button
+                onClick={addExpense}
+                disabled={adding || !amount}
+                className="w-full bg-navy hover:bg-navy-light disabled:opacity-40 text-gold font-semibold py-2.5 rounded-xl transition-colors text-sm tracking-wide"
+              >
+                {adding ? "Adding…" : "+ Add Expense"}
+              </button>
             </div>
-            <button
-              onClick={addExpense}
-              disabled={adding || !amount}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:bg-indigo-200 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
-            >
-              {adding ? "Adding…" : "Add Expense"}
-            </button>
-          </div>
-        </motion.section>
+          </motion.div>
 
-        {/* Expenses List */}
-        {expenses.length > 0 && (
-          <motion.section
-            initial={{ opacity: 0, y: 12 }}
+          {/* Expense list */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25 }}
-            className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
+            transition={{ delay: 0.45 }}
+            className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
           >
-            <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
-              <h2 className="font-semibold text-gray-800 text-sm">Expenses</h2>
-              <span className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
-                {expenses.length} total
-              </span>
+            <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+              <h3 className="font-semibold text-navy text-sm">Expenses</h3>
+              {expenses.length > 0 && (
+                <span className="text-xs text-gray-400 bg-gray-50 px-2.5 py-1 rounded-full">
+                  {expenses.length}
+                </span>
+              )}
             </div>
-            <div className="divide-y divide-gray-50">
-              <AnimatePresence initial={false}>
-                {expenses.map((e) => (
-                  <motion.div
-                    key={e.id}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 8 }}
-                    className="flex items-center justify-between px-4 py-3"
-                  >
-                    <span className="text-sm text-gray-700 truncate mr-3">{e.description}</span>
-                    <span className="text-sm font-semibold text-rose-500 shrink-0">
-                      −₹{(e.amount ?? 0).toLocaleString("en-IN")}
-                    </span>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </motion.section>
-        )}
+            {expenses.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-8">No expenses yet.</p>
+            ) : (
+              <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+                <AnimatePresence initial={false}>
+                  {expenses.map((e) => (
+                    <motion.div
+                      key={e.id}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="flex items-center justify-between px-5 py-3"
+                    >
+                      <span className="text-sm text-gray-700 truncate mr-3">{e.description}</span>
+                      <span className="text-sm font-semibold text-red-500 shrink-0">
+                        −₹{(e.amount ?? 0).toLocaleString("en-IN")}
+                      </span>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </motion.div>
+        </div>
 
-        <p className="text-center text-xs text-gray-300 py-2">
-          KCF · {new Date().getFullYear()}
+        <p className="text-center text-xs text-gray-300 pb-2">
+          KCF Group · Est. 2020
         </p>
       </div>
     </div>
