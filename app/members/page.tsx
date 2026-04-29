@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, updateDoc, doc } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { motion } from "framer-motion";
 
@@ -9,41 +9,73 @@ interface Member {
   id: string;
   name: string;
   paid: boolean;
-  photoUrl?: string;
   role?: string;
 }
 
-function Avatar({ name, photoUrl, paid }: { name: string; photoUrl?: string; paid: boolean }) {
-  const initials = name
+// Maps Firestore name → processed photo in /public/processed/
+const PHOTO_MAP: Record<string, string> = {
+  "Ajay":      "/processed/Ajay.jpg",
+  "Anant":     "/processed/Anant.jpg",
+  "Anil":      "/processed/Anil.jpg",
+  "Ashwini":   "/processed/Ashwini.jpg",
+  "Deepesh":   "/processed/Deepesh.jpg",
+  "Devesh":    "/processed/Devesh.jpg",
+  "Ritik":     "/processed/Ritik.jpg",
+  "Rohit":     "/processed/Rohit.jpg",
+  "Sahas":     "/processed/Sahas.jpg",
+  "Shreyansh": "/processed/Shreyansh.jpg",
+  "Pranav":    "/processed/pranav.jpg",
+  "Siddhant":  "/processed/siddhant.jpg",
+};
+
+function getPhoto(name: string): string | null {
+  // Try exact match first, then first-name match (case-insensitive)
+  if (PHOTO_MAP[name]) return PHOTO_MAP[name];
+  const firstName = name.split(" ")[0];
+  const key = Object.keys(PHOTO_MAP).find(
+    (k) => k.toLowerCase() === firstName.toLowerCase()
+  );
+  return key ? PHOTO_MAP[key] : null;
+}
+
+function MemberCard({ member, index }: { member: Member; index: number }) {
+  const photo = getPhoto(member.name);
+  const initials = member.name
     .split(" ")
     .map((w) => w[0])
     .slice(0, 2)
     .join("")
     .toUpperCase();
 
-  if (photoUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={photoUrl}
-        alt={name}
-        className={`w-20 h-20 rounded-full object-cover mx-auto border-2 ${
-          paid ? "border-gold" : "border-gray-200"
-        }`}
-      />
-    );
-  }
-
   return (
-    <div
-      className={`w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mx-auto ${
-        paid
-          ? "bg-gold/20 text-navy border-2 border-gold/40"
-          : "bg-gray-100 text-gray-400 border-2 border-transparent"
-      }`}
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.06, ease: "easeOut" }}
+      className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
     >
-      {initials}
-    </div>
+      {/* Photo — full card width */}
+      {photo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photo}
+          alt={member.name}
+          className="w-full aspect-square object-cover"
+        />
+      ) : (
+        <div className="w-full aspect-square bg-gold/15 flex items-center justify-center text-4xl font-bold text-navy">
+          {initials}
+        </div>
+      )}
+
+      {/* Name */}
+      <div className="px-3 py-2.5 text-center">
+        <p className="font-semibold text-navy text-sm leading-tight">{member.name}</p>
+        {member.role && (
+          <p className="text-xs text-gray-400 mt-0.5">{member.role}</p>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -59,12 +91,6 @@ export default function MembersPage() {
     return unsub;
   }, []);
 
-  const togglePayment = async (m: Member) => {
-    await updateDoc(doc(db, "members", m.id), { paid: !m.paid });
-  };
-
-  const paidCount = members.filter((m) => m.paid).length;
-
   return (
     <div className="bg-cream min-h-full">
 
@@ -76,9 +102,7 @@ export default function MembersPage() {
           </p>
           <h1 className="text-white text-2xl font-bold">Members</h1>
           {!loading && (
-            <p className="text-white/40 text-sm mt-1">
-              {paidCount} of {members.length} have paid this year
-            </p>
+            <p className="text-white/40 text-sm mt-1">{members.length} members</p>
           )}
         </div>
       </div>
@@ -95,53 +119,15 @@ export default function MembersPage() {
             <p className="text-sm text-gray-400 mt-1">
               Add documents to the{" "}
               <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">members</code>{" "}
-              Firestore collection with{" "}
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">name</code>,{" "}
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">paid</code>, and optionally{" "}
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">photoUrl</code>.
+              Firestore collection.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {members.map((m, i) => (
-              <motion.div
-                key={m.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.06, ease: "easeOut" }}
-                className={`bg-white rounded-2xl p-5 text-center shadow-sm border-2 transition-all ${
-                  m.paid ? "border-gold/30" : "border-transparent"
-                }`}
-              >
-                <div className="mb-3">
-                  <Avatar name={m.name} photoUrl={m.photoUrl} paid={m.paid} />
-                </div>
-
-                <p className="font-semibold text-navy text-sm truncate">{m.name}</p>
-                {m.role && (
-                  <p className="text-xs text-gray-400 mt-0.5 truncate">{m.role}</p>
-                )}
-
-                <button
-                  onClick={() => togglePayment(m)}
-                  className={`mt-3 w-full text-xs font-semibold py-1.5 rounded-full transition-all active:scale-95 ${
-                    m.paid
-                      ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                      : "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                  }`}
-                >
-                  {m.paid ? "✓ Paid" : "Pending"}
-                </button>
-              </motion.div>
+              <MemberCard key={m.id} member={m} index={i} />
             ))}
           </div>
-        )}
-
-        {members.length > 0 && (
-          <p className="text-center text-xs text-gray-300 mt-6">
-            Add a{" "}
-            <code className="bg-gray-200/60 px-1 rounded">photoUrl</code> field to each Firestore member document to show their photo.
-          </p>
         )}
       </div>
     </div>

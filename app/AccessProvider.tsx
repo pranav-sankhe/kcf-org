@@ -1,23 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Nav from "./Nav";
 
-const ACCESS_CODE = "kcf-fund-8842";
-const STORAGE_KEY = "kcf-access-v1";
+export type Role = "viewer" | "admin";
+
+const AccessContext = createContext<Role | null>(null);
+export const useAccess = () => useContext(AccessContext);
+
+const CODES: Record<string, Role> = {
+  kcf:    "viewer",
+  kcfkey: "admin",
+};
+
+const STORAGE_KEY = "kcf-access-v2";
 
 function AnchorIcon({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      viewBox="0 0 100 120"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg className={className} viewBox="0 0 100 120" fill="none" stroke="currentColor"
+      strokeWidth="5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="50" cy="14" r="9" />
       <line x1="50" y1="23" x2="50" y2="106" />
       <line x1="16" y1="42" x2="84" y2="42" />
@@ -29,13 +31,14 @@ function AnchorIcon({ className }: { className?: string }) {
   );
 }
 
-function AccessGate({ onSuccess }: { onSuccess: () => void }) {
+function AccessGate({ onSuccess }: { onSuccess: (role: Role) => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(false);
 
   const enter = () => {
-    if (code === ACCESS_CODE) {
-      onSuccess();
+    const role = CODES[code.trim()];
+    if (role) {
+      onSuccess(role);
     } else {
       setError(true);
     }
@@ -46,10 +49,9 @@ function AccessGate({ onSuccess }: { onSuccess: () => void }) {
       <motion.div
         initial={{ opacity: 0, y: 32 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
+        transition={{ duration: 0.5, ease: "easeOut" as const }}
         className="w-full max-w-sm"
       >
-        {/* Brand area */}
         <div className="text-center mb-10">
           <AnchorIcon className="w-20 h-20 text-gold mx-auto mb-5 drop-shadow-lg" />
           <h1 className="text-5xl font-bold text-gold tracking-[0.15em]">KCF GROUP</h1>
@@ -61,7 +63,6 @@ function AccessGate({ onSuccess }: { onSuccess: () => void }) {
           </div>
         </div>
 
-        {/* Code form */}
         <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 border border-white/10 space-y-4">
           <p className="text-center text-gold/60 text-sm">Enter access code to continue</p>
           <input
@@ -72,9 +73,7 @@ function AccessGate({ onSuccess }: { onSuccess: () => void }) {
             placeholder="••••••••••••"
             autoFocus
             className={`w-full bg-white/10 border rounded-xl px-4 py-3 text-sm text-gold placeholder-gold/20 outline-none transition-all focus:ring-2 ${
-              error
-                ? "border-red-400/60 focus:ring-red-400/30"
-                : "border-white/20 focus:ring-gold/30"
+              error ? "border-red-400/60 focus:ring-red-400/30" : "border-white/20 focus:ring-gold/30"
             }`}
           />
           <AnimatePresence>
@@ -102,13 +101,16 @@ function AccessGate({ onSuccess }: { onSuccess: () => void }) {
 }
 
 export default function AccessProvider({ children }: { children: React.ReactNode }) {
-  const [access, setAccess] = useState<boolean | null>(null);
+  const [role, setRole] = useState<Role | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setAccess(localStorage.getItem(STORAGE_KEY) === "true");
+    const stored = localStorage.getItem(STORAGE_KEY) as Role | null;
+    if (stored === "viewer" || stored === "admin") setRole(stored);
+    setHydrated(true);
   }, []);
 
-  if (access === null) {
+  if (!hydrated) {
     return (
       <div className="min-h-screen bg-navy flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-gold/20 border-t-gold rounded-full animate-spin" />
@@ -116,21 +118,21 @@ export default function AccessProvider({ children }: { children: React.ReactNode
     );
   }
 
-  if (!access) {
+  if (!role) {
     return (
       <AccessGate
-        onSuccess={() => {
-          localStorage.setItem(STORAGE_KEY, "true");
-          setAccess(true);
+        onSuccess={(r) => {
+          localStorage.setItem(STORAGE_KEY, r);
+          setRole(r);
         }}
       />
     );
   }
 
   return (
-    <>
+    <AccessContext.Provider value={role}>
       <Nav />
       <main className="min-h-[calc(100vh-3.5rem)]">{children}</main>
-    </>
+    </AccessContext.Provider>
   );
 }
